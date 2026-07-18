@@ -246,3 +246,42 @@ def test_patch_finding_missing_field_returns_400(tmp_path, monkeypatch):
     response = client.patch("/findings/f1", json={})
 
     assert response.status_code == 400
+
+
+def test_finding_advice_returns_llm_answer(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "FINDINGS_PATH", str(tmp_path / "findings.jsonl"))
+    storage.append_finding({"id": "f1", "message": "Cash breach", "reasons": []})
+    monkeypatch.setattr(llm, "answer_question", lambda q, ctx: "Pay by UPI instead.")
+
+    import webhook_app
+    client = webhook_app.app.test_client()
+    response = client.post("/findings/f1/advice", json={})
+
+    assert response.status_code == 200
+    assert response.get_json()["answer"] == "Pay by UPI instead."
+
+
+def test_finding_advice_404_when_finding_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "FINDINGS_PATH", str(tmp_path / "findings.jsonl"))
+
+    import webhook_app
+    client = webhook_app.app.test_client()
+    response = client.post("/findings/nope/advice", json={})
+
+    assert response.status_code == 404
+
+
+def test_finding_advice_502_on_llm_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "FINDINGS_PATH", str(tmp_path / "findings.jsonl"))
+    storage.append_finding({"id": "f1", "message": "Cash breach", "reasons": []})
+
+    def _boom(q, ctx):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(llm, "answer_question", _boom)
+
+    import webhook_app
+    client = webhook_app.app.test_client()
+    response = client.post("/findings/f1/advice", json={})
+
+    assert response.status_code == 502

@@ -162,6 +162,25 @@ def get_itr_export():
     return jsonify(itr_export.export_itr_json(transactions, findings)), 200
 
 
+@app.route("/findings/<finding_id>/advice", methods=["POST"])
+def finding_advice(finding_id):
+    findings = storage.load_findings()
+    finding = next((f for f in findings if f.get("id") == finding_id), None)
+    if finding is None:
+        return jsonify({"error": "finding not found"}), 404
+
+    body = request.get_json(silent=True) or {}
+    question = body.get("question") or f"What should I do about this: {finding['message']}"
+
+    try:
+        answer = llm.answer_question(question, {"finding": finding})
+    except Exception:
+        app.logger.exception("Failed to get advice for finding %s", finding_id)
+        return jsonify({"error": "could not get advice"}), 502
+
+    return jsonify({"answer": answer}), 200
+
+
 if __name__ == "__main__":
     if config.NGROK_AUTHTOKEN:
         from pyngrok import ngrok
