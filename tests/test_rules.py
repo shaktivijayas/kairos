@@ -113,27 +113,27 @@ def test_vendor_risk_flags_amount_deviation_and_escalates_severity():
 
 
 def test_find_deductions_matches_80c_keyword():
-    finding = rules.find_deductions(_txn(raw_text="LIC premium payment", amount=12000))
+    findings = rules.find_deductions(_txn(raw_text="LIC premium payment", amount=12000))
 
-    assert finding is not None
-    assert finding["type"] == "deduction_opportunity"
-    assert "80C" in finding["message"]
-    assert finding["amount"] == 12000
+    assert len(findings) == 1
+    assert findings[0]["type"] == "deduction_opportunity"
+    assert "80C" in findings[0]["message"]
+    assert findings[0]["amount"] == 12000
 
 
 def test_find_deductions_matches_80d_keyword():
-    finding = rules.find_deductions(_txn(category_hint="health insurance renewal"))
+    findings = rules.find_deductions(_txn(category_hint="health insurance renewal"))
 
-    assert finding is not None
-    assert "80D" in finding["message"]
+    assert len(findings) == 1
+    assert "80D" in findings[0]["message"]
 
 
 def test_find_deductions_matches_24b_keyword():
-    finding = rules.find_deductions(_txn(raw_text="Home loan EMI debited"))
+    findings = rules.find_deductions(_txn(raw_text="Home loan EMI debited"))
 
-    assert finding is not None
-    assert "24b" in finding["message"]
+    assert len(findings) == 1
+    assert "24b" in findings[0]["message"]
 
 
-def test_find_deductions_returns_none_when_no_keyword_matches():
-    assert rules.find_deductions(_txn(raw_text="Paid for office chairs")) is None
+def test_find_deductions_returns_empty_list_when_no_keyword_matches():
+    assert rules.find_deductions(_txn(raw_text="Paid for office chairs")) == []

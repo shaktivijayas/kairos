@@ -29,9 +29,7 @@ def process_scanned_document(image_bytes):
     if risk_finding:
         findings.append(risk_finding)
 
-    deduction_finding = rules.find_deductions(txn)
-    if deduction_finding:
-        findings.append(deduction_finding)
+    findings.extend(rules.find_deductions(txn))
 
     storage.append_transaction(txn)
     for f in findings:

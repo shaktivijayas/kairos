@@ -1,9 +1,11 @@
 """
 Edge-case stress tests for kairos.rules, beyond the happy-path coverage in
-test_rules.py. Some tests here assert CURRENT (buggy or limited) behavior on
-purpose, with a docstring explaining the gap — they exist to make the gap
-visible and regression-proof the decision once it's addressed, not because
-the behavior is desirable.
+test_rules.py. Several tests below (marked FIXED) originally documented real
+bugs found by this file — crashes on malformed LLM output, a zero-variance
+blind spot in vendor risk scoring, and keyword substring false positives in
+the deduction finder — and were flipped to assert the corrected behavior once
+rules.py was fixed. One test (marked LIMITATION) documents a gap that's
+intentionally not fixed, with the reasoning inline.
 """
 import pytest
 
@@ -77,67 +79,91 @@ def test_cash_limit_only_matching_vendor_combines_among_several():
     assert finding["amount"] == 1000  # only the 4000 + 7000 Sharma Traders pair
 
 
-# --- bugs / gaps surfaced by boundary testing -------------------------------
+# --- fixed bugs / gaps -------------------------------------------------------
 
-def test_cash_limit_missing_amount_crashes_instead_of_skipping():
+def test_cash_limit_missing_amount_skips_gracefully():
     """
-    BUG: new_txn["amount"] is accessed with direct indexing, not .get(). If
-    the LLM fails to extract an amount from an SMS (returns null), this
-    raises TypeError instead of skipping the transaction gracefully — a
-    malformed upstream LLM response can crash the whole webhook request.
+    FIXED: new_txn.get("amount") is now validated as numeric before use. If
+    the LLM fails to extract an amount from an SMS (returns null), the
+    transaction is skipped for this check instead of crashing the request
+    with a TypeError.
     """
     new_txn = _txn(amount=None)
-    with pytest.raises(TypeError):
-        rules.check_cash_limit([], new_txn, limit=10000)
+    assert rules.check_cash_limit([], new_txn, limit=10000) is None
 
 
-def test_cash_limit_missing_timestamp_key_raises_keyerror():
+def test_cash_limit_missing_timestamp_skips_gracefully():
     """
-    BUG: new_txn["timestamp"] is accessed with direct indexing. If the
-    caller ever omits the key entirely (vs. an empty string), this crashes
-    with KeyError rather than being treated as "unknown date".
+    FIXED: a missing/falsy timestamp is now treated as "can't determine the
+    date" and the check is skipped, instead of raising KeyError.
     """
     new_txn = _txn()
     del new_txn["timestamp"]
-    with pytest.raises(KeyError):
-        rules.check_cash_limit([], new_txn, limit=10000)
+    assert rules.check_cash_limit([], new_txn, limit=10000) is None
 
 
-def test_cash_limit_string_amount_crashes_during_aggregation():
+def test_cash_limit_string_amount_skips_gracefully():
     """
-    BUG: if amount arrives as a string (e.g. a JSON quirk from the LLM
-    response), summing against prior numeric amounts raises TypeError
-    instead of coercing or rejecting cleanly.
+    FIXED: a non-numeric amount (e.g. a string from a JSON quirk in the LLM
+    response) is now rejected up front rather than crashing when summed
+    against prior numeric amounts.
     """
     existing = [_txn(amount=5000)]
     new_txn = _txn(amount="6000")
-    with pytest.raises(TypeError):
-        rules.check_cash_limit(existing, new_txn, limit=10000)
+    assert rules.check_cash_limit(existing, new_txn, limit=10000) is None
 
 
-def test_cash_limit_different_unknown_vendors_incorrectly_combine():
+def test_cash_limit_malformed_prior_entry_is_skipped_not_fatal():
     """
-    GAP: two cash transactions with vendor_name=None (unrecognized vendor,
-    common from noisy SMS/OCR) are grouped together as if they were the same
-    vendor purely because None == None. Two genuinely unrelated small cash
-    payments to different unnamed parties can trip a false breach.
+    FIXED: a malformed prior transaction (bad amount type) in the existing
+    ledger no longer crashes the whole aggregation — it's excluded from the
+    sum and the rest of the check proceeds normally.
+    """
+    existing = [_txn(amount="bad-data"), _txn(amount=6000)]
+    new_txn = _txn(amount=5000)
+    finding = rules.check_cash_limit(existing, new_txn, limit=10000)
+    assert finding is not None
+    assert finding["amount"] == 1000  # only the valid 6000 + 5000 combine
+
+
+def test_cash_limit_different_unknown_vendors_no_longer_combine():
+    """
+    FIXED: two cash transactions with vendor_name=None (unrecognized
+    vendor) are no longer grouped together just because None == None —
+    _same_vendor requires an actual matching GSTIN or vendor name, so two
+    genuinely unrelated unnamed-vendor payments can no longer trip a false
+    breach together.
     """
     existing = [_txn(amount=6000, vendor_name=None)]
     new_txn = _txn(amount=5000, vendor_name=None)
-    finding = rules.check_cash_limit(existing, new_txn, limit=10000)
-    assert finding is not None  # documents the false-positive-prone behavior
+    assert rules.check_cash_limit(existing, new_txn, limit=10000) is None
 
 
-def test_cash_limit_differently_cased_vendor_names_do_not_combine():
+def test_cash_limit_differently_cased_vendor_names_now_combine():
     """
-    GAP (false negative): vendor name matching is exact-string, case
-    sensitive. The same vendor captured as "Sharma Traders" from an invoice
-    and "sharma traders" from an SMS won't be recognized as the same vendor,
-    so a real breach can be missed.
+    FIXED: vendor name matching is now case-insensitive (normalized via
+    strip().lower()), so "Sharma Traders" from an invoice and
+    "sharma traders" from an SMS are recognized as the same vendor and a
+    real breach is no longer missed.
     """
     existing = [_txn(amount=8000, vendor_name="Sharma Traders")]
     new_txn = _txn(amount=5000, vendor_name="sharma traders")
-    assert rules.check_cash_limit(existing, new_txn, limit=10000) is None
+    finding = rules.check_cash_limit(existing, new_txn, limit=10000)
+    assert finding is not None
+    assert finding["amount"] == 3000
+
+
+def test_cash_limit_same_gstin_different_vendor_spelling_combines():
+    """
+    New coverage for the GSTIN-based matching path: a vendor whose name is
+    OCR'd slightly differently between two invoices, but shares a GSTIN,
+    should still be recognized as the same vendor for aggregation.
+    """
+    existing = [_txn(amount=8000, vendor_name="Sharma Trader's", vendor_gstin="27AAAAA0000A1Z5")]
+    new_txn = _txn(amount=5000, vendor_name="Sharma Traders Pvt", vendor_gstin="27AAAAA0000A1Z5")
+    finding = rules.check_cash_limit(existing, new_txn, limit=10000)
+    assert finding is not None
+    assert finding["amount"] == 3000
 
 
 # ---------------------------------------------------------------------------
@@ -195,57 +221,93 @@ def test_vendor_risk_prior_amounts_ignore_entries_missing_amount():
     assert rules.score_vendor_risk(existing, new_txn) is None
 
 
-# --- bugs / gaps surfaced by boundary testing -------------------------------
+# --- fixed bugs / gaps -------------------------------------------------------
 
-def test_vendor_risk_zero_variance_history_blind_spot():
+def test_vendor_risk_zero_variance_history_now_flagged():
     """
-    BUG: when a vendor's prior invoices happen to be identical (stdev == 0),
-    the deviation check is gated on `stdev > 0` and skips entirely — so a
-    wildly anomalous new amount (100x a vendor's stable history) goes
-    completely undetected, which is exactly the scenario the check exists
-    to catch.
+    FIXED: when a vendor's prior invoices are identical (stdev == 0), the
+    deviation check now falls back to a relative-jump comparison (>50% off
+    the constant historical mean) instead of skipping entirely — so a
+    wildly anomalous new amount (100x a vendor's stable history) is caught.
     """
     existing = [
         _txn(vendor_gstin="27AAAAA0000A1Z5", invoice_number="INV-1", amount=1000),
         _txn(vendor_gstin="27AAAAA0000A1Z5", invoice_number="INV-2", amount=1000),
     ]
     new_txn = _txn(vendor_gstin="27AAAAA0000A1Z5", invoice_number="INV-3", amount=100000)
-    assert rules.score_vendor_risk(existing, new_txn) is None  # documents the blind spot
+    finding = rules.score_vendor_risk(existing, new_txn)
+    assert finding is not None
+    assert any("deviates sharply" in r for r in finding["reasons"])
 
 
-def test_vendor_risk_lowercase_gstin_flagged_as_malformed():
+def test_vendor_risk_zero_variance_small_fluctuation_not_flagged():
     """
-    GAP (likely false positive): the GSTIN regex requires uppercase letters.
-    A structurally valid GSTIN captured in lowercase (common after OCR on a
-    photographed invoice) is flagged as malformed even though it's real.
+    Companion boundary test for the fix above: a modest fluctuation from a
+    zero-variance history (well under the 50% relative threshold) should
+    still pass quietly rather than over-flagging routine variation.
+    """
+    existing = [
+        _txn(vendor_gstin="27AAAAA0000A1Z5", invoice_number="INV-1", amount=1000),
+        _txn(vendor_gstin="27AAAAA0000A1Z5", invoice_number="INV-2", amount=1000),
+    ]
+    new_txn = _txn(vendor_gstin="27AAAAA0000A1Z5", invoice_number="INV-3", amount=1200)
+    assert rules.score_vendor_risk(existing, new_txn) is None
+
+
+def test_vendor_risk_lowercase_gstin_no_longer_flagged_as_malformed():
+    """
+    FIXED: GSTIN format matching now normalizes to uppercase before
+    checking, so a structurally valid GSTIN captured in lowercase (common
+    after OCR on a photographed invoice) is no longer flagged as malformed.
     """
     finding = rules.score_vendor_risk([], _txn(vendor_gstin="27aaaaa0000a1z5"))
-    assert finding is not None
-    assert any("does not match" in r for r in finding["reasons"])
+    assert finding is None
 
 
 def test_vendor_risk_structurally_valid_but_fabricated_gstin_not_flagged():
     """
-    LIMITATION (by design, not a bug): the format regex checks shape only,
-    not the real GSTIN checksum or GSTN allotment. A well-formed but
-    entirely fabricated GSTIN passes silently. This is a ceiling on the
-    check's accuracy given KAIROS has no GSTN portal access by design.
+    LIMITATION (intentionally not fixed): the format regex checks shape
+    only, not the real GSTIN checksum or GSTN allotment. A well-formed but
+    entirely fabricated GSTIN passes silently. A real checksum algorithm
+    exists (mod-36/ISO-7064-based) but implementing it from memory risks
+    getting it subtly wrong — rejecting real GSTINs is worse for user trust
+    than not catching fabricated ones, given KAIROS already has no GSTN
+    portal access to verify allotment either way. Left as a documented
+    ceiling rather than a guessed implementation.
     """
     finding = rules.score_vendor_risk([], _txn(vendor_gstin="12ABCDE1234F1Z9"))
     assert finding is None
 
 
-def test_vendor_risk_duplicate_check_skipped_when_vendor_name_missing():
+def test_vendor_risk_duplicate_check_now_matches_via_gstin_when_vendor_missing():
     """
-    GAP: duplicate-invoice detection requires both invoice_number AND
-    vendor_name to be truthy. Transactions with no recognized vendor name
-    (exactly the noisiest, highest-risk data) silently skip this check.
+    FIXED: duplicate-invoice detection now matches on GSTIN when both
+    transactions have one (more reliable than vendor_name), so it no longer
+    silently skips the noisiest, highest-risk data — transactions where the
+    vendor name wasn't captured but the GSTIN was.
     """
     existing = [
         _txn(vendor_gstin="27AAAAA0000A1Z5", vendor_name=None, invoice_number="INV-1"),
     ]
     new_txn = _txn(vendor_gstin="27AAAAA0000A1Z5", vendor_name=None, invoice_number="INV-1")
-    assert rules.score_vendor_risk(existing, new_txn) is None
+    finding = rules.score_vendor_risk(existing, new_txn)
+    assert finding is not None
+    assert any("already seen" in r for r in finding["reasons"])
+
+
+def test_vendor_risk_duplicate_check_still_skipped_when_both_gstin_and_vendor_missing():
+    """
+    Companion boundary test: when NEITHER GSTIN nor vendor_name is present
+    on either side, there's no reliable identity signal at all, so the
+    duplicate check correctly stays silent rather than guessing.
+    """
+    existing = [_txn(vendor_gstin=None, vendor_name=None, invoice_number="INV-1")]
+    new_txn = _txn(vendor_gstin=None, vendor_name=None, invoice_number="INV-1")
+    finding = rules.score_vendor_risk(existing, new_txn)
+    # missing GSTIN still fires its own reason; the duplicate-invoice
+    # reason specifically must not, since there's no identity to match on
+    assert finding is not None
+    assert not any("already seen" in r for r in finding["reasons"])
 
 
 # ---------------------------------------------------------------------------
@@ -253,77 +315,87 @@ def test_vendor_risk_duplicate_check_skipped_when_vendor_name_missing():
 # ---------------------------------------------------------------------------
 
 def test_find_deductions_matches_at_start_and_end_of_text():
-    assert rules.find_deductions(_txn(raw_text="LIC")) is not None
-    assert rules.find_deductions(_txn(raw_text="Paid for home loan")) is not None
+    assert rules.find_deductions(_txn(raw_text="LIC")) != []
+    assert rules.find_deductions(_txn(raw_text="Paid for home loan")) != []
 
 
 def test_find_deductions_case_and_punctuation_insensitive():
-    finding = rules.find_deductions(_txn(raw_text="LIC. Premium-payment!!"))
-    assert finding is not None
-    assert "80C" in finding["message"]
+    findings = rules.find_deductions(_txn(raw_text="LIC. Premium-payment!!"))
+    assert len(findings) == 1
+    assert "80C" in findings[0]["message"]
 
 
 def test_find_deductions_reads_category_hint_when_raw_text_empty():
-    finding = rules.find_deductions(_txn(raw_text="", category_hint="Health Insurance premium"))
-    assert finding is not None
-    assert "80D" in finding["message"]
+    findings = rules.find_deductions(_txn(raw_text="", category_hint="Health Insurance premium"))
+    assert len(findings) == 1
+    assert "80D" in findings[0]["message"]
 
 
 def test_find_deductions_none_amount_does_not_crash():
-    finding = rules.find_deductions(_txn(raw_text="LIC premium", amount=None))
-    assert finding is not None
-    assert finding["amount"] is None
+    findings = rules.find_deductions(_txn(raw_text="LIC premium", amount=None))
+    assert len(findings) == 1
+    assert findings[0]["amount"] is None
 
 
-# --- bugs / gaps surfaced by boundary testing -------------------------------
+# --- fixed bugs / gaps -------------------------------------------------------
 
-def test_find_deductions_false_positive_on_premium_substring():
+def test_find_deductions_premium_no_longer_false_positives_to_24b():
     """
-    BUG: keyword matching is plain substring search with no word boundaries.
-    "premium" contains the literal substring "emi" (pr-EMI-um), so any
-    insurance-premium text with no other keyword incorrectly surfaces a
-    Section 24b (home loan EMI) deduction — exactly the kind of confident,
-    wrong suggestion the product pitch promises never to make.
+    FIXED: keyword matching now requires word boundaries (\\bkeyword\\b), so
+    "premium" no longer accidentally matches the substring "emi" (pr-EMI-um)
+    and misfires a Section 24b (home loan EMI) suggestion.
     """
-    finding = rules.find_deductions(_txn(raw_text="Paid two-wheeler premium today"))
-    assert finding is not None
-    assert "24b" in finding["message"]  # wrong: this transaction has nothing to do with a home loan
+    assert rules.find_deductions(_txn(raw_text="Paid two-wheeler premium today")) == []
 
 
-def test_find_deductions_false_positive_on_policy_substring():
+def test_find_deductions_policy_no_longer_false_positives_to_80c():
     """
-    BUG: distinct collision found while writing the test above — "policy"
-    contains the literal substring "lic" (po-LIC-y), so ANY transaction
-    mentioning a policy (vehicle, fire, travel — not life insurance) gets
-    misfiled as a Section 80C (LIC) deduction. This one is worse than the
-    "emi" collision because "policy" is an extremely common word in
-    non-tax-relevant purchase text.
+    FIXED: same fix closes the "policy" -> "lic" collision (po-LIC-y) — a
+    vehicle/fire/travel insurance policy no longer gets misfiled as a
+    Section 80C LIC deduction.
     """
-    finding = rules.find_deductions(_txn(raw_text="Renewed two-wheeler insurance policy"))
-    assert finding is not None
-    assert "80C" in finding["message"]  # wrong: vehicle insurance is not a Section 80C LIC deduction
+    assert rules.find_deductions(_txn(raw_text="Renewed two-wheeler insurance policy")) == []
 
 
-def test_find_deductions_false_positive_on_chemical_substring():
+def test_find_deductions_chemical_no_longer_false_positives_to_24b():
     """
-    BUG: same root cause as above via a different everyday word — "chemical"
-    also contains "emi" (che-MI-cal... c-h-E-M-I-cal), so ordinary business
-    purchases with no loan/insurance relevance can misfire.
+    FIXED: same word-boundary fix closes the "chemical" -> "emi" collision.
     """
-    finding = rules.find_deductions(_txn(raw_text="Chemical supplies for manufacturing unit"))
-    assert finding is not None
-    assert "24b" in finding["message"]  # wrong: no loan or EMI involved
+    assert rules.find_deductions(_txn(raw_text="Chemical supplies for manufacturing unit")) == []
 
 
-def test_find_deductions_only_returns_first_match_when_multiple_qualify():
+def test_find_deductions_genuine_word_boundary_matches_still_work():
     """
-    GAP: a transaction that legitimately touches two different deduction
-    sections only ever surfaces the first one found (dict iteration order:
-    80C, 80D, 24b) — the second, equally valid opportunity is silently
-    dropped, understating "found money" for the user.
+    Companion sanity check for the word-boundary fix: real standalone
+    keyword usage — including immediately after punctuation — still
+    matches correctly, so the fix didn't overcorrect into false negatives.
     """
-    finding = rules.find_deductions(
+    assert rules.find_deductions(_txn(raw_text="EMI due tomorrow")) != []
+    assert rules.find_deductions(_txn(raw_text="Bought a new insurance policy: mediclaim")) != []
+
+
+def test_find_deductions_now_returns_all_matching_sections():
+    """
+    FIXED: find_deductions now returns a list of every matching section
+    instead of stopping at the first — a transaction that legitimately
+    touches two different deduction sections surfaces both instead of
+    silently dropping the second.
+    """
+    findings = rules.find_deductions(
         _txn(raw_text="LIC premium and home loan EMI both paid this month")
     )
-    assert finding is not None
-    assert "80C" in finding["message"]  # the 24b home-loan angle is never surfaced
+    sections = {f["message"] for f in findings}
+    assert len(findings) == 2
+    assert any("80C" in s for s in sections)
+    assert any("24b" in s for s in sections)
+
+
+def test_find_deductions_does_not_duplicate_within_the_same_section():
+    """
+    A transaction matching two keywords from the SAME section (e.g. both
+    "home loan" and "emi") should still only produce one finding for that
+    section, not one per matched keyword.
+    """
+    findings = rules.find_deductions(_txn(raw_text="Home loan EMI debited"))
+    assert len(findings) == 1
+    assert "24b" in findings[0]["message"]
