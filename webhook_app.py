@@ -61,6 +61,57 @@ def sms_webhook():
     return jsonify({"transaction": txn, "findings": findings}), 200
 
 
+def process_scan(image_bytes, mime_type="image/jpeg"):
+    parsed = llm.read_document_image(image_bytes, mime_type=mime_type)
+    txn = {
+        "id": str(uuid.uuid4()),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "source": "camera",
+        "raw_text": parsed.get("category_hint") or "",
+        "classification": "business",
+        "amount": parsed.get("amount"),
+        "payment_mode": "unknown",
+        "vendor_name": parsed.get("vendor_name"),
+        "vendor_gstin": parsed.get("vendor_gstin"),
+        "invoice_number": parsed.get("invoice_number"),
+        "category_hint": parsed.get("category_hint"),
+    }
+
+    existing = storage.load_transactions()
+    findings = []
+
+    if profile.load_profile().get("tax_scheme") != "composition":
+        risk_finding = rules.score_vendor_risk(existing, txn)
+        if risk_finding:
+            findings.append(risk_finding)
+
+    findings.extend(rules.find_deductions(txn))
+
+    storage.append_transaction(txn)
+    for f in findings:
+        f["id"] = str(uuid.uuid4())
+        f["timestamp"] = txn["timestamp"]
+        f["transaction_id"] = txn["id"]
+        storage.append_finding(f)
+
+    return txn, findings
+
+
+@app.route("/scan", methods=["POST"])
+def scan_document():
+    if "file" not in request.files:
+        return jsonify({"error": "missing 'file'"}), 400
+    file = request.files["file"]
+    image_bytes = file.read()
+    mime_type = file.mimetype or "image/jpeg"
+    try:
+        txn, findings = process_scan(image_bytes, mime_type)
+    except Exception:
+        app.logger.exception("Failed to process scan upload")
+        return jsonify({"error": "could not process this document"}), 502
+    return jsonify({"transaction": txn, "findings": findings}), 200
+
+
 @app.route("/profile", methods=["GET"])
 def get_profile():
     return jsonify(profile.load_profile()), 200

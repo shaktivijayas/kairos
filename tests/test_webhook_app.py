@@ -1,3 +1,5 @@
+import io
+
 from kairos import llm, profile, storage
 
 
@@ -127,3 +129,72 @@ def test_get_findings_returns_all(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     assert len(response.get_json()) == 2
+
+
+def test_scan_endpoint_flags_vendor_risk_for_regular_scheme(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "LEDGER_PATH", str(tmp_path / "ledger.jsonl"))
+    monkeypatch.setattr(storage, "FINDINGS_PATH", str(tmp_path / "findings.jsonl"))
+    monkeypatch.setattr(profile, "PROFILE_PATH", str(tmp_path / "profile.json"))
+    monkeypatch.setattr(
+        llm,
+        "read_document_image",
+        lambda image_bytes, mime_type="image/jpeg": {
+            "vendor_name": "Ganesh Stores",
+            "vendor_gstin": None,
+            "invoice_number": "INV-001",
+            "amount": 2500,
+            "category_hint": "stationery",
+        },
+    )
+
+    import webhook_app
+    client = webhook_app.app.test_client()
+    response = client.post(
+        "/scan",
+        data={"file": (io.BytesIO(b"fake-image-bytes"), "invoice.jpg")},
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert any(f["type"] == "vendor_risk" for f in body["findings"])
+
+
+def test_scan_endpoint_skips_vendor_risk_for_composition_scheme(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "LEDGER_PATH", str(tmp_path / "ledger.jsonl"))
+    monkeypatch.setattr(storage, "FINDINGS_PATH", str(tmp_path / "findings.jsonl"))
+    monkeypatch.setattr(profile, "PROFILE_PATH", str(tmp_path / "profile.json"))
+    profile.save_profile({"tax_scheme": "composition"})
+    monkeypatch.setattr(
+        llm,
+        "read_document_image",
+        lambda image_bytes, mime_type="image/jpeg": {
+            "vendor_name": "Ganesh Stores",
+            "vendor_gstin": None,
+            "invoice_number": "INV-001",
+            "amount": 2500,
+            "category_hint": "stationery",
+        },
+    )
+
+    import webhook_app
+    client = webhook_app.app.test_client()
+    response = client.post(
+        "/scan",
+        data={"file": (io.BytesIO(b"fake-image-bytes"), "invoice.jpg")},
+        content_type="multipart/form-data",
+    )
+
+    body = response.get_json()
+    assert not any(f["type"] == "vendor_risk" for f in body["findings"])
+
+
+def test_scan_endpoint_missing_file_returns_400(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "LEDGER_PATH", str(tmp_path / "ledger.jsonl"))
+    monkeypatch.setattr(storage, "FINDINGS_PATH", str(tmp_path / "findings.jsonl"))
+
+    import webhook_app
+    client = webhook_app.app.test_client()
+    response = client.post("/scan", data={}, content_type="multipart/form-data")
+
+    assert response.status_code == 400

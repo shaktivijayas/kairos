@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 import streamlit as st
 
-from kairos import itr_export, llm, rules, storage
+from kairos import itr_export, llm, profile, rules, storage
 
 
 def process_scanned_document(image_bytes):
@@ -25,9 +25,10 @@ def process_scanned_document(image_bytes):
     existing = storage.load_transactions()
     findings = []
 
-    risk_finding = rules.score_vendor_risk(existing, txn)
-    if risk_finding:
-        findings.append(risk_finding)
+    if profile.load_profile().get("tax_scheme") != "composition":
+        risk_finding = rules.score_vendor_risk(existing, txn)
+        if risk_finding:
+            findings.append(risk_finding)
 
     findings.extend(rules.find_deductions(txn))
 
