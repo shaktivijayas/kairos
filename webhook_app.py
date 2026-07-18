@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-from kairos import config, llm, rules, storage
+from kairos import config, llm, profile, rules, storage
 
 app = Flask(__name__)
 # Permissive for now — the Lovable frontend's origin isn't known until that
@@ -59,6 +59,22 @@ def sms_webhook():
         app.logger.exception("Failed to process SMS webhook payload")
         return jsonify({"error": "could not process this message"}), 502
     return jsonify({"transaction": txn, "findings": findings}), 200
+
+
+@app.route("/profile", methods=["GET"])
+def get_profile():
+    return jsonify(profile.load_profile()), 200
+
+
+@app.route("/profile", methods=["POST"])
+def update_profile():
+    body = request.get_json(force=True) or {}
+    current = profile.load_profile()
+    for key in ("legal_business_name", "trade_style", "business_category", "tax_scheme"):
+        if key in body:
+            current[key] = body[key]
+    profile.save_profile(current)
+    return jsonify(current), 200
 
 
 if __name__ == "__main__":
