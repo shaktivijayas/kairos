@@ -38,3 +38,22 @@ def test_sms_webhook_missing_text_returns_400(monkeypatch, tmp_path):
     response = client.post("/sms", json={})
 
     assert response.status_code == 400
+
+
+def test_sms_webhook_llm_failure_returns_clean_502_not_a_traceback(monkeypatch, tmp_path):
+    monkeypatch.setattr(storage, "LEDGER_PATH", str(tmp_path / "ledger.jsonl"))
+    monkeypatch.setattr(storage, "FINDINGS_PATH", str(tmp_path / "findings.jsonl"))
+
+    def _boom(text):
+        raise RuntimeError("simulated LLM/API failure")
+
+    monkeypatch.setattr(llm, "classify_transaction", _boom)
+
+    import webhook_app
+    client = webhook_app.app.test_client()
+
+    response = client.post("/sms", json={"text": "Paid Rs.2500 to Ganesh Stores"})
+
+    assert response.status_code == 502
+    assert response.get_json() == {"error": "could not process this message"}
+    assert storage.load_transactions() == []  # nothing partially written

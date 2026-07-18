@@ -17,4 +17,4 @@ def test_cash_limit_from_env(monkeypatch):
 
 def test_gemma_model_is_fixed():
     from kairos import config
-    assert config.GEMMA_MODEL == "gemma-3-27b-it"
+    assert config.GEMMA_MODEL == "gemma-4-31b-it"

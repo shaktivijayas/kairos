@@ -49,7 +49,11 @@ def sms_webhook():
     text = body.get("text", "")
     if not text:
         return jsonify({"error": "missing 'text'"}), 400
-    txn, findings = process_sms(text)
+    try:
+        txn, findings = process_sms(text)
+    except Exception:
+        app.logger.exception("Failed to process SMS webhook payload")
+        return jsonify({"error": "could not process this message"}), 502
     return jsonify({"transaction": txn, "findings": findings}), 200
 
 
