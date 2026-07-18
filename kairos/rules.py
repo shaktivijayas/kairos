@@ -79,3 +79,28 @@ def score_vendor_risk(transactions, new_txn):
         "message": f"Vendor '{vendor or 'unknown'}' flagged as {severity} risk for ITC purposes.",
         "reasons": reasons,
     }
+
+
+DEDUCTION_KEYWORDS = {
+    "80C": ["lic", "life insurance", "ppf", "elss", "mutual fund", "tuition fee"],
+    "80D": ["health insurance", "mediclaim", "medical insurance"],
+    "24b": ["home loan", "housing loan", "emi"],
+}
+
+
+def find_deductions(new_txn):
+    text = f"{new_txn.get('raw_text', '')} {new_txn.get('category_hint', '')}".lower()
+    for section, keywords in DEDUCTION_KEYWORDS.items():
+        for kw in keywords:
+            if kw in text:
+                return {
+                    "type": "deduction_opportunity",
+                    "severity": "green",
+                    "amount": new_txn.get("amount"),
+                    "message": (
+                        f"This looks like it may qualify for a Section {section} deduction "
+                        "— worth reviewing with your CA."
+                    ),
+                    "reasons": [f"Matched keyword '{kw}' under Section {section}"],
+                }
+    return None

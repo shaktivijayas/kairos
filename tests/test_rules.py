@@ -110,3 +110,30 @@ def test_vendor_risk_flags_amount_deviation_and_escalates_severity():
     assert finding is not None
     assert finding["severity"] == "red"  # missing GSTIN + amount deviation = 2 reasons
     assert any("deviates sharply" in r for r in finding["reasons"])
+
+
+def test_find_deductions_matches_80c_keyword():
+    finding = rules.find_deductions(_txn(raw_text="LIC premium payment", amount=12000))
+
+    assert finding is not None
+    assert finding["type"] == "deduction_opportunity"
+    assert "80C" in finding["message"]
+    assert finding["amount"] == 12000
+
+
+def test_find_deductions_matches_80d_keyword():
+    finding = rules.find_deductions(_txn(category_hint="health insurance renewal"))
+
+    assert finding is not None
+    assert "80D" in finding["message"]
+
+
+def test_find_deductions_matches_24b_keyword():
+    finding = rules.find_deductions(_txn(raw_text="Home loan EMI debited"))
+
+    assert finding is not None
+    assert "24b" in finding["message"]
+
+
+def test_find_deductions_returns_none_when_no_keyword_matches():
+    assert rules.find_deductions(_txn(raw_text="Paid for office chairs")) is None
