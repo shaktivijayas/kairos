@@ -32,3 +32,20 @@ def append_finding(finding, path=None):
 
 def load_findings(path=None):
     return _load(path or FINDINGS_PATH)
+
+
+def update_finding(finding_id, updates, path=None):
+    p = path or FINDINGS_PATH
+    findings = _load(p)
+    updated = None
+    for f in findings:
+        if f.get("id") == finding_id:
+            f.update(updates)
+            updated = f
+            break
+    if updated is None:
+        return None
+    with open(p, "w", encoding="utf-8") as fh:
+        for f in findings:
+            fh.write(json.dumps(f) + "\n")
+    return updated

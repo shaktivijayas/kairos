@@ -213,3 +213,36 @@ def test_get_itr_export_returns_aggregated_json(tmp_path, monkeypatch):
     body = response.get_json()
     assert body["gross_business_receipts"] == 5000
     assert body["for_review_with_ca"] is True
+
+
+def test_patch_finding_acknowledges_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "FINDINGS_PATH", str(tmp_path / "findings.jsonl"))
+    storage.append_finding({"id": "f1", "acknowledged": False})
+
+    import webhook_app
+    client = webhook_app.app.test_client()
+    response = client.patch("/findings/f1", json={"acknowledged": True})
+
+    assert response.status_code == 200
+    assert response.get_json()["acknowledged"] is True
+
+
+def test_patch_finding_404_when_not_found(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "FINDINGS_PATH", str(tmp_path / "findings.jsonl"))
+
+    import webhook_app
+    client = webhook_app.app.test_client()
+    response = client.patch("/findings/nope", json={"acknowledged": True})
+
+    assert response.status_code == 404
+
+
+def test_patch_finding_missing_field_returns_400(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "FINDINGS_PATH", str(tmp_path / "findings.jsonl"))
+    storage.append_finding({"id": "f1", "acknowledged": False})
+
+    import webhook_app
+    client = webhook_app.app.test_client()
+    response = client.patch("/findings/f1", json={})
+
+    assert response.status_code == 400

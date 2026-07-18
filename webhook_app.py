@@ -42,6 +42,7 @@ def process_sms(text):
         f["id"] = str(uuid.uuid4())
         f["timestamp"] = txn["timestamp"]
         f["transaction_id"] = txn["id"]
+        f["acknowledged"] = False
         storage.append_finding(f)
 
     return txn, findings
@@ -92,6 +93,7 @@ def process_scan(image_bytes, mime_type="image/jpeg"):
         f["id"] = str(uuid.uuid4())
         f["timestamp"] = txn["timestamp"]
         f["transaction_id"] = txn["id"]
+        f["acknowledged"] = False
         storage.append_finding(f)
 
     return txn, findings
@@ -140,6 +142,17 @@ def get_transactions():
 @app.route("/findings", methods=["GET"])
 def get_findings():
     return jsonify(storage.load_findings()), 200
+
+
+@app.route("/findings/<finding_id>", methods=["PATCH"])
+def patch_finding(finding_id):
+    body = request.get_json(force=True) or {}
+    if "acknowledged" not in body:
+        return jsonify({"error": "missing 'acknowledged'"}), 400
+    updated = storage.update_finding(finding_id, {"acknowledged": bool(body["acknowledged"])})
+    if updated is None:
+        return jsonify({"error": "finding not found"}), 404
+    return jsonify(updated), 200
 
 
 @app.route("/itr/export", methods=["GET"])
