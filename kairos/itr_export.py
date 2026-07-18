@@ -1,7 +1,9 @@
 def export_itr_json(transactions, findings):
     business_txns = [t for t in transactions if t.get("classification") == "business"]
-    gross_receipts = sum(t["amount"] for t in business_txns if t.get("amount", 0) > 0)
-    total_expenses = sum(t["amount"] for t in business_txns)
+    gross_receipts = sum(
+        t.get("amount") or 0 for t in business_txns if (t.get("amount") or 0) > 0
+    )
+    total_expenses = sum(t.get("amount") or 0 for t in business_txns)
 
     disallowed_40a3 = sum(
         f["amount"] for f in findings

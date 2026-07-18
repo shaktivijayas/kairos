@@ -170,7 +170,7 @@ def finding_advice(finding_id):
         return jsonify({"error": "finding not found"}), 404
 
     body = request.get_json(silent=True) or {}
-    question = body.get("question") or f"What should I do about this: {finding['message']}"
+    question = body.get("question") or f"What should I do about this: {finding.get('message', 'this compliance issue')}"
 
     try:
         answer = llm.answer_question(question, {"finding": finding})

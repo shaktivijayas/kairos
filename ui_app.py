@@ -37,6 +37,7 @@ def process_scanned_document(image_bytes):
         f["id"] = str(uuid.uuid4())
         f["timestamp"] = txn["timestamp"]
         f["transaction_id"] = txn["id"]
+        f["acknowledged"] = False
         storage.append_finding(f)
 
     return txn, findings

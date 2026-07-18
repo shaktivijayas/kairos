@@ -44,6 +44,22 @@ def test_export_counts_vendor_risk_flags():
     assert result["vendor_risk_flags"] == 2
 
 
+def test_export_handles_business_transaction_with_null_amount():
+    """
+    A scanned document where Gemma couldn't extract an amount produces a
+    business transaction with amount=None -- this must not crash the export.
+    """
+    transactions = [
+        {"classification": "business", "amount": None},
+        {"classification": "business", "amount": 5000},
+    ]
+
+    result = itr_export.export_itr_json(transactions, [])
+
+    assert result["gross_business_receipts"] == 5000
+    assert result["total_business_expenses"] == 5000
+
+
 def test_export_handles_no_transactions_or_findings():
     result = itr_export.export_itr_json([], [])
 
