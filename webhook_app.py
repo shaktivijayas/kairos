@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-from kairos import config, llm, profile, rules, storage
+from kairos import config, itr_export, llm, profile, rules, storage
 
 app = Flask(__name__)
 # Permissive for now — the Lovable frontend's origin isn't known until that
@@ -140,6 +140,13 @@ def get_transactions():
 @app.route("/findings", methods=["GET"])
 def get_findings():
     return jsonify(storage.load_findings()), 200
+
+
+@app.route("/itr/export", methods=["GET"])
+def get_itr_export():
+    transactions = storage.load_transactions()
+    findings = storage.load_findings()
+    return jsonify(itr_export.export_itr_json(transactions, findings)), 200
 
 
 if __name__ == "__main__":

@@ -198,3 +198,18 @@ def test_scan_endpoint_missing_file_returns_400(tmp_path, monkeypatch):
     response = client.post("/scan", data={}, content_type="multipart/form-data")
 
     assert response.status_code == 400
+
+
+def test_get_itr_export_returns_aggregated_json(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "LEDGER_PATH", str(tmp_path / "ledger.jsonl"))
+    monkeypatch.setattr(storage, "FINDINGS_PATH", str(tmp_path / "findings.jsonl"))
+    storage.append_transaction({"classification": "business", "amount": 5000})
+
+    import webhook_app
+    client = webhook_app.app.test_client()
+    response = client.get("/itr/export")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["gross_business_receipts"] == 5000
+    assert body["for_review_with_ca"] is True
