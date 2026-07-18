@@ -15,6 +15,18 @@ def _get_client():
     return _client
 
 
+def _parse_json_object(text):
+    """
+    The API's JSON mode isn't schema-constrained, so it non-deterministically
+    wraps a single-object response in a list on some calls (observed ~1-in-3
+    for read_document_image). Unwrap that so callers always get a dict.
+    """
+    parsed = json.loads(text)
+    if isinstance(parsed, list):
+        return parsed[0] if parsed else {}
+    return parsed
+
+
 CLASSIFY_PROMPT = """You are a transaction classifier for an Indian small-business compliance tool.
 Given a bank SMS alert, return a JSON object with these keys:
 "classification" ("business" or "personal"), "amount" (number), "payment_mode" ("cash", "upi", "card", or "unknown"), "vendor_name" (string or null).
@@ -28,7 +40,7 @@ def classify_transaction(text):
         contents=CLASSIFY_PROMPT.format(text=text),
         config=types.GenerateContentConfig(response_mime_type="application/json"),
     )
-    return json.loads(response.text)
+    return _parse_json_object(response.text)
 
 
 DOCUMENT_PROMPT = """You are reading a photographed Indian business invoice or cash slip.
@@ -47,7 +59,7 @@ def read_document_image(image_bytes, mime_type="image/jpeg"):
         ],
         config=types.GenerateContentConfig(response_mime_type="application/json"),
     )
-    return json.loads(response.text)
+    return _parse_json_object(response.text)
 
 
 ANSWER_PROMPT = """You are KAIROS, a compliance assistant for an Indian micro-merchant. Answer plainly and briefly.
