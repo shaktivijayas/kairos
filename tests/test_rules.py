@@ -64,3 +64,49 @@ def test_different_day_does_not_combine():
     new_txn = _txn(amount=5000, timestamp="2026-07-18T10:00:00+00:00")
 
     assert rules.check_cash_limit(existing, new_txn, limit=10000) is None
+
+
+def test_vendor_risk_flags_missing_gstin():
+    finding = rules.score_vendor_risk([], _txn(vendor_gstin=None))
+
+    assert finding is not None
+    assert finding["type"] == "vendor_risk"
+    assert finding["severity"] == "yellow"
+    assert "No GSTIN captured" in finding["reasons"][0]
+
+
+def test_vendor_risk_flags_malformed_gstin():
+    finding = rules.score_vendor_risk([], _txn(vendor_gstin="NOT-A-GSTIN"))
+
+    assert finding is not None
+    assert any("does not match" in r for r in finding["reasons"])
+
+
+def test_vendor_risk_passes_valid_gstin_with_no_history():
+    finding = rules.score_vendor_risk([], _txn(vendor_gstin="27AAAAA0000A1Z5"))
+
+    assert finding is None
+
+
+def test_vendor_risk_flags_duplicate_invoice_number():
+    existing = [_txn(vendor_gstin="27AAAAA0000A1Z5", invoice_number="INV-100")]
+    new_txn = _txn(vendor_gstin="27AAAAA0000A1Z5", invoice_number="INV-100")
+
+    finding = rules.score_vendor_risk(existing, new_txn)
+
+    assert finding is not None
+    assert any("already seen" in r for r in finding["reasons"])
+
+
+def test_vendor_risk_flags_amount_deviation_and_escalates_severity():
+    existing = [
+        _txn(vendor_gstin="27AAAAA0000A1Z5", invoice_number="INV-1", amount=1000),
+        _txn(vendor_gstin="27AAAAA0000A1Z5", invoice_number="INV-2", amount=1100),
+    ]
+    new_txn = _txn(vendor_gstin=None, invoice_number="INV-3", amount=50000)
+
+    finding = rules.score_vendor_risk(existing, new_txn)
+
+    assert finding is not None
+    assert finding["severity"] == "red"  # missing GSTIN + amount deviation = 2 reasons
+    assert any("deviates sharply" in r for r in finding["reasons"])
