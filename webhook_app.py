@@ -2,10 +2,14 @@ import uuid
 from datetime import datetime, timezone
 
 from flask import Flask, jsonify, request
+from flask_cors import CORS
 
 from kairos import config, llm, rules, storage
 
 app = Flask(__name__)
+# Permissive for now — the Lovable frontend's origin isn't known until that
+# project exists. Tighten to specific origins once it's deployed.
+CORS(app)
 
 
 def process_sms(text):

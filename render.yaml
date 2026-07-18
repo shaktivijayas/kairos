@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: kairos-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn webhook_app:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: CASH_LIMIT_INR
+        value: "10000"
