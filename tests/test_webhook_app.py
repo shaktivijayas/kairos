@@ -87,3 +87,43 @@ def test_post_profile_saves_and_returns_updated_profile(tmp_path, monkeypatch):
 
     get_response = client.get("/profile")
     assert get_response.get_json()["tax_scheme"] == "composition"
+
+
+def test_get_transactions_returns_all(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "LEDGER_PATH", str(tmp_path / "ledger.jsonl"))
+    storage.append_transaction({"id": "t1", "source": "sms"})
+    storage.append_transaction({"id": "t2", "source": "camera"})
+
+    import webhook_app
+    client = webhook_app.app.test_client()
+    response = client.get("/transactions")
+
+    assert response.status_code == 200
+    assert len(response.get_json()) == 2
+
+
+def test_get_transactions_filters_by_source(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "LEDGER_PATH", str(tmp_path / "ledger.jsonl"))
+    storage.append_transaction({"id": "t1", "source": "sms"})
+    storage.append_transaction({"id": "t2", "source": "camera"})
+
+    import webhook_app
+    client = webhook_app.app.test_client()
+    response = client.get("/transactions?source=sms")
+
+    body = response.get_json()
+    assert len(body) == 1
+    assert body[0]["id"] == "t1"
+
+
+def test_get_findings_returns_all(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "FINDINGS_PATH", str(tmp_path / "findings.jsonl"))
+    storage.append_finding({"id": "f1"})
+    storage.append_finding({"id": "f2"})
+
+    import webhook_app
+    client = webhook_app.app.test_client()
+    response = client.get("/findings")
+
+    assert response.status_code == 200
+    assert len(response.get_json()) == 2

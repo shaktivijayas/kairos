@@ -77,6 +77,20 @@ def update_profile():
     return jsonify(current), 200
 
 
+@app.route("/transactions", methods=["GET"])
+def get_transactions():
+    source = request.args.get("source")
+    transactions = storage.load_transactions()
+    if source:
+        transactions = [t for t in transactions if t.get("source") == source]
+    return jsonify(transactions), 200
+
+
+@app.route("/findings", methods=["GET"])
+def get_findings():
+    return jsonify(storage.load_findings()), 200
+
+
 if __name__ == "__main__":
     if config.NGROK_AUTHTOKEN:
         from pyngrok import ngrok
