@@ -150,3 +150,7 @@ venv/
 
 # KAIROS runtime data
 data/*.jsonl
+
+# Local AI tooling artifacts
+CLAUDE.md
+.impeccable/
