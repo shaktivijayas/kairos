@@ -43,11 +43,17 @@ KAIROS watches the two signals they already generate: **forwarded banking SMS al
 
 ## 📸 The app, running
 
-> Real capture — the KAIROS Streamlit dashboard after four forwarded SMS messages were pushed through the live `/sms` pipeline (Gemma classification → rules engine → JSON-Lines ledger → ITR export).
+> Real capture of the production UI ([kairos-compliance.lovable.app](https://kairos-compliance.lovable.app)) after five forwarded SMS messages were pushed through the live API (Gemma classification → rules engine → JSON-Lines ledger → ITR export).
 
-<img src="docs/screenshots/dashboard.png" alt="KAIROS dashboard — ledger, flags, and ITR export" width="900" />
+**Triage** — every flag, grouped by zone, each with its reasoning:
 
-Two ₹-cash payments to the same vendor on the same day trip a **red Section 40A(3)** flag (₹13,700 total, ₹3,700 disallowed); an LIC premium and a mediclaim renewal surface as **green 80C / 80D** opportunities; the ITR export rolls all of it into one reviewable JSON object.
+<img src="docs/screenshots/triage.png" alt="KAIROS Triage — red / yellow / green flag matrix with per-finding reasons" width="900" />
+
+**Automation** — the ITR pre-filing risk audit rolled up from the same ledger:
+
+<img src="docs/screenshots/automation.png" alt="KAIROS Automation — ITR pre-filing risk audit and deductions found" width="900" />
+
+Two cash payments to the same vendor on the same day trip a **red Section 40A(3)** flag (₹13,700 total, ₹3,700 disallowed); an LIC premium and a mediclaim renewal surface as **green 80C / 80D** opportunities; the Automation page aggregates it into a filing-ready snapshot.
 
 ---
 
